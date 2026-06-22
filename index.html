@@ -81,11 +81,41 @@ canvas { display:block; touch-action:none; }
       <div class="gc-info"><div class="gc-name">Air Hockey</div><div class="gc-desc">Primeiro a 7 gols vence a partida</div></div>
       <div class="gc-play">JOGAR</div>
     </div>
+    <div class="game-card" onclick="Platform.launch('sumo')">
+      <div class="gc-icon">🥊</div>
+      <div class="gc-info"><div class="gc-name">Sumo</div><div class="gc-desc">Empurre o adversário para fora do ringue</div></div>
+      <div class="gc-play">JOGAR</div>
+    </div>
+    <div class="game-card" onclick="Platform.launch('tanques')">
+      <div class="gc-icon">💥</div>
+      <div class="gc-info"><div class="gc-name">Tanques</div><div class="gc-desc">Mire e atire — 3 vidas cada um</div></div>
+      <div class="gc-play">JOGAR</div>
+    </div>
+    <div class="game-card" onclick="Platform.launch('futebol')">
+      <div class="gc-icon">⚽</div>
+      <div class="gc-info"><div class="gc-name">Futebol</div><div class="gc-desc">Marque 5 gols para vencer</div></div>
+      <div class="gc-play">JOGAR</div>
+    </div>
+    <div class="game-card" onclick="Platform.launch('slime')">
+      <div class="gc-icon">🏐</div>
+      <div class="gc-info"><div class="gc-name">Slime Vôlei</div><div class="gc-desc">Vôlei ao contrário — primeiro a 7 pontos</div></div>
+      <div class="gc-play">JOGAR</div>
+    </div>
+    <div class="game-card" onclick="Platform.launch('pingpong')">
+      <div class="gc-icon">🏓</div>
+      <div class="gc-info"><div class="gc-name">Ping Pong</div><div class="gc-desc">Pingue-pongue clássico — primeiro a 7</div></div>
+      <div class="gc-play">JOGAR</div>
+    </div>
   </div>
 </div>
 
 <div id="screen-bilhar" class="game-screen"><canvas id="cv-bilhar"></canvas></div>
 <div id="screen-airhockey" class="game-screen"><canvas id="cv-airhockey"></canvas></div>
+<div id="screen-sumo" class="game-screen"><canvas id="cv-sumo"></canvas></div>
+<div id="screen-tanques" class="game-screen"><canvas id="cv-tanques"></canvas></div>
+<div id="screen-futebol" class="game-screen"><canvas id="cv-futebol"></canvas></div>
+<div id="screen-slime" class="game-screen"><canvas id="cv-slime"></canvas></div>
+<div id="screen-pingpong" class="game-screen"><canvas id="cv-pingpong"></canvas></div>
 <div id="back-btn" onclick="Platform.back()">← Menu</div>
 
 <script>
@@ -557,7 +587,753 @@ const AirHockey = (() => {
   };
 })();
 
-const Games = { bilhar:Bilhar, airhockey:AirHockey };
+// ═══════════════════════════════════════════════════
+//  SUMO
+// ═══════════════════════════════════════════════════
+const Sumo = (() => {
+  let cv, X, raf, live = false, evOk = false;
+  let W, H;
+  let state = 'play', pauseTimer = 0, goalMessage = '', goalAlpha = 0;
+  let arenaR = 0, ballR = 0;
+  let j1 = { x:0,y:0,vx:0,vy:0 }, j2 = { x:0,y:0,vx:0,vy:0 };
+  let j1Score = 0, j2Score = 0;
+  let j1Touch = null, j2Touch = null;
+
+  const init = () => {
+    cv = document.getElementById('cv-sumo');
+    X = cv.getContext('2d');
+    W = cv.width = window.innerWidth;
+    H = cv.height = window.innerHeight;
+    arenaR = H * 0.32;
+    ballR = W * 0.065;
+    resetGame();
+    if (!evOk) {
+      evOk = true;
+      cv.addEventListener('touchstart', onTouchStart, false);
+      cv.addEventListener('touchmove', onTouchMove, {passive:false});
+      cv.addEventListener('touchend', onTouchEnd, false);
+      cv.addEventListener('click', () => { if (state === 'over') resetGame(); });
+    }
+    live = true;
+    loop();
+  };
+
+  const resetGame = () => { state = 'play'; j1Score = 0; j2Score = 0; resetBalls(); };
+  const resetBalls = () => {
+    j1.x = W/2; j1.y = H/2 + arenaR*0.7; j1.vx = 0; j1.vy = 0;
+    j2.x = W/2; j2.y = H/2 - arenaR*0.7; j2.vx = 0; j2.vy = 0;
+    state = 'play'; pauseTimer = 0; goalMessage = ''; goalAlpha = 0;
+  };
+
+  const onTouchStart = (e) => {
+    for (let t of e.touches) {
+      if (t.clientY > H/2) j1Touch = t; else j2Touch = t;
+    }
+  };
+  const onTouchMove = (e) => {
+    e.preventDefault();
+    for (let t of e.touches) {
+      if (t.clientY > H/2) j1Touch = t; else j2Touch = t;
+    }
+  };
+  const onTouchEnd = (e) => {
+    if (e.touches.length === 0) { j1Touch = null; j2Touch = null; return; }
+    for (let t of e.touches) {
+      if (t.clientY > H/2) j1Touch = t; else j2Touch = t;
+    }
+  };
+
+  const applyForce = (b, tx, ty) => {
+    const dx = tx - b.x, dy = ty - b.y, d = Math.sqrt(dx*dx+dy*dy);
+    if (d > 0.1) { b.vx += (dx/d)*0.35; b.vy += (dy/d)*0.35; }
+  };
+
+  const checkArenaCollision = (b) => {
+    const cx = W/2, cy = H/2;
+    const dx = b.x - cx, dy = b.y - cy;
+    const dist = Math.sqrt(dx*dx + dy*dy);
+    if (dist > arenaR - ballR && dist > 0) {
+      const nx = dx/dist, ny = dy/dist;
+      b.x = cx + nx*(arenaR - ballR);
+      b.y = cy + ny*(arenaR - ballR);
+      const dot = b.vx*nx + b.vy*ny;
+      if (dot > 0) { b.vx -= 2*dot*nx; b.vy -= 2*dot*ny; b.vx *= 0.8; b.vy *= 0.8; }
+    }
+  };
+
+  const checkBallCollision = (b1, b2) => {
+    const dx = b2.x-b1.x, dy = b2.y-b1.y, dist = Math.sqrt(dx*dx+dy*dy), md = 2*ballR;
+    if (dist < md && dist > 0) {
+      const nx = dx/dist, ny = dy/dist, ov = md-dist;
+      b1.x -= nx*ov*0.5; b1.y -= ny*ov*0.5;
+      b2.x += nx*ov*0.5; b2.y += ny*ov*0.5;
+      const v1n = b1.vx*nx + b1.vy*ny, v2n = b2.vx*nx + b2.vy*ny;
+      b1.vx += (v2n-v1n)*nx; b1.vy += (v2n-v1n)*ny;
+      b2.vx += (v1n-v2n)*nx; b2.vy += (v1n-v2n)*ny;
+    }
+  };
+
+  const checkGoal = (b, winner) => {
+    const dx = b.x - W/2, dy = b.y - H/2, dist = Math.sqrt(dx*dx+dy*dy);
+    if (dist >= arenaR - ballR*0.3) {
+      if (winner === 'J1') { j1Score++; goalMessage = 'Ponto do J1!'; }
+      else { j2Score++; goalMessage = 'Ponto do J2!'; }
+      goalAlpha = 1.0;
+      if (j1Score >= 3) { state = 'over'; Platform.addWin(0); return; }
+      if (j2Score >= 3) { state = 'over'; Platform.addWin(1); return; }
+      state = 'pause'; pauseTimer = 90; resetBalls();
+    }
+  };
+
+  const updatePhysics = () => {
+    if (state !== 'play') return;
+    if (j1Touch) applyForce(j1, j1Touch.clientX, j1Touch.clientY);
+    if (j2Touch) applyForce(j2, j2Touch.clientX, j2Touch.clientY);
+    const cap = (b) => {
+      const s = Math.sqrt(b.vx*b.vx + b.vy*b.vy);
+      if (s > 12) { b.vx = b.vx/s*12; b.vy = b.vy/s*12; }
+      b.vx *= 0.90; b.vy *= 0.90;
+    };
+    cap(j1); cap(j2);
+    j1.x += j1.vx; j1.y += j1.vy;
+    j2.x += j2.vx; j2.y += j2.vy;
+    checkGoal(j1, 'J2');
+    if (state !== 'play') return;
+    checkGoal(j2, 'J1');
+    if (state !== 'play') return;
+    checkArenaCollision(j1);
+    checkArenaCollision(j2);
+    checkBallCollision(j1, j2);
+  };
+
+  const update = () => {
+    if (state === 'play') updatePhysics();
+    else if (state === 'pause') { if (--pauseTimer <= 0) state = 'play'; }
+    if (goalAlpha > 0) { goalAlpha -= 0.015; if (goalAlpha < 0) goalAlpha = 0; }
+  };
+
+  const drawBall = (b, col) => {
+    const g = X.createRadialGradient(b.x-ballR*0.3, b.y-ballR*0.3, 0, b.x, b.y, ballR);
+    g.addColorStop(0, lcol(col, 0.5)); g.addColorStop(0.5, col); g.addColorStop(1, dcol(col, 0.6));
+    X.fillStyle = g; X.beginPath(); X.arc(b.x, b.y, ballR, 0, Math.PI*2); X.fill();
+    X.strokeStyle = dcol(col, 0.8); X.lineWidth = 2; X.stroke();
+  };
+
+  const draw = () => {
+    const cx = W/2, cy = H/2;
+    X.fillStyle = '#12122a'; X.fillRect(0,0,W,H);
+    X.fillStyle = '#0a0a20'; X.beginPath(); X.arc(cx, cy, arenaR, 0, Math.PI*2); X.fill();
+    X.strokeStyle = 'rgba(255,220,100,0.6)'; X.lineWidth = 3;
+    X.beginPath(); X.arc(cx, cy, arenaR, 0, Math.PI*2); X.stroke();
+    drawBall(j1, '#FF3333'); drawBall(j2, '#3399FF');
+    X.font = 'bold 36px Arial'; X.textAlign = 'center';
+    X.fillStyle = '#FF3333'; X.textBaseline = 'bottom'; X.fillText(j1Score + ' J1', cx, H-20);
+    X.save(); X.translate(cx, 20); X.rotate(Math.PI);
+    X.fillStyle = '#3399FF'; X.textBaseline = 'bottom'; X.fillText(j2Score + ' J2', 0, 0);
+    X.restore();
+    if (goalAlpha > 0) {
+      X.fillStyle = `rgba(255,255,255,${goalAlpha*0.7})`; X.font = 'bold 48px Arial';
+      X.textBaseline = 'middle'; X.fillText(goalMessage, cx, cy);
+    }
+    if (state === 'over') {
+      X.fillStyle = 'rgba(0,0,0,0.6)'; X.fillRect(0,0,W,H);
+      const w = j1Score >= 3 ? 'J1' : 'J2';
+      X.font = 'bold 64px Arial'; X.textBaseline = 'middle';
+      X.fillStyle = w === 'J1' ? '#FF3333' : '#3399FF';
+      X.fillText(w + ' VENCEU!', cx, cy-40);
+      X.font = '28px Arial'; X.fillStyle = '#fff'; X.fillText('Toque para jogar novamente', cx, cy+40);
+    }
+  };
+
+  const loop = () => { if (!live) return; update(); draw(); raf = requestAnimationFrame(loop); };
+  return {
+    init() { init(); },
+    destroy() { live = false; cancelAnimationFrame(raf); }
+  };
+})();
+
+// ═══════════════════════════════════════════════════
+//  TANQUES
+// ═══════════════════════════════════════════════════
+const Tanques = (() => {
+  let cv, X, raf, live = false, evOk = false;
+  let W = 0, H = 0, gameOver = false, winner = null;
+  const players = [
+    { x:0, y:0, angle:0, lives:3, color:'#2a7f2a', touches:new Map(), hitFlash:0 },
+    { x:0, y:0, angle:Math.PI, lives:3, color:'#d63d3d', touches:new Map(), hitFlash:0 }
+  ];
+  let cannonballs = [];
+  const TANK_R = 0.07, BARREL_LEN = 0.12, BARREL_W = 0.015;
+  const CB_R = 8, FIRE_BTN_R = 30, CB_SPEED = 12, GRAVITY = 0.15;
+  const MAX_CB = 2, CB_LIFE = 180, CB_BOUNCES = 3;
+
+  function init() {
+    cv = document.getElementById('cv-tanques');
+    if (!cv) return;
+    X = cv.getContext('2d');
+    W = cv.width = window.innerWidth;
+    H = cv.height = window.innerHeight;
+    players[0].x = W/2; players[0].y = H*0.75;
+    players[1].x = W/2; players[1].y = H*0.25;
+    gameOver = false; winner = null; cannonballs = [];
+    players[0].lives = 3; players[1].lives = 3;
+    players[0].hitFlash = 0; players[1].hitFlash = 0;
+    players[0].touches.clear(); players[1].touches.clear();
+    live = true;
+    if (!evOk) { addTouchEvents(); evOk = true; }
+    loop();
+  }
+  function destroy() { live = false; if (raf) cancelAnimationFrame(raf); }
+
+  function addTouchEvents() {
+    cv.addEventListener('touchstart', onTouchStart);
+    cv.addEventListener('touchmove', onTouchMove);
+    cv.addEventListener('touchend', onTouchEnd);
+  }
+  function onTouchStart(e) {
+    if (gameOver) {
+      gameOver = false; winner = null; cannonballs = [];
+      players[0].lives = 3; players[1].lives = 3;
+      players[0].hitFlash = 0; players[1].hitFlash = 0;
+      return;
+    }
+    e.preventDefault();
+    for (const t of e.touches) {
+      const pi = t.clientY > H/2 ? 0 : 1;
+      players[pi].touches.set(t.identifier, { x:t.clientX, y:t.clientY });
+    }
+  }
+  function onTouchMove(e) {
+    if (gameOver) return;
+    e.preventDefault();
+    for (const t of e.touches) {
+      const pi = t.clientY > H/2 ? 0 : 1;
+      const td = players[pi].touches.get(t.identifier);
+      if (td) {
+        td.x = t.clientX; td.y = t.clientY;
+        let ang = Math.atan2(t.clientY - players[pi].y, t.clientX - players[pi].x);
+        if (pi === 1) ang += Math.PI;
+        players[pi].angle = ang;
+      }
+    }
+  }
+  function onTouchEnd(e) {
+    if (gameOver) return;
+    for (const t of e.changedTouches) {
+      for (let pi = 0; pi < 2; pi++) {
+        const td = players[pi].touches.get(t.identifier);
+        if (td) {
+          const fbx = W*0.82, fby = pi === 0 ? H*0.82 : H*0.18;
+          if (Math.hypot(t.clientX-fbx, t.clientY-fby) < FIRE_BTN_R) fire(pi);
+          players[pi].touches.delete(t.identifier);
+        }
+      }
+    }
+  }
+  function fire(pi) {
+    if (cannonballs.filter(c => c.pi === pi).length >= MAX_CB) return;
+    const p = players[pi];
+    cannonballs.push({
+      x: p.x + Math.cos(p.angle)*(W*BARREL_LEN*0.7),
+      y: p.y + Math.sin(p.angle)*(W*BARREL_LEN*0.7),
+      vx: Math.cos(p.angle)*CB_SPEED, vy: Math.sin(p.angle)*CB_SPEED,
+      pi, age:0, bounces:0
+    });
+  }
+  function update() {
+    cannonballs = cannonballs.filter(c => {
+      c.age++;
+      if (c.age > CB_LIFE || c.bounces > CB_BOUNCES) return false;
+      c.x += c.vx; c.y += c.vy; c.vy += GRAVITY;
+      if (c.x - CB_R < 0) { c.x = CB_R; c.vx *= -0.8; c.bounces++; }
+      if (c.x + CB_R > W) { c.x = W-CB_R; c.vx *= -0.8; c.bounces++; }
+      if (c.y - CB_R < 0) { c.y = CB_R; c.vy *= -0.8; c.bounces++; }
+      if (c.y + CB_R > H) { c.y = H-CB_R; c.vy *= -0.8; c.bounces++; }
+      const opp = players[1 - c.pi];
+      if (Math.hypot(c.x-opp.x, c.y-opp.y) < CB_R + W*TANK_R) {
+        opp.lives--; opp.hitFlash = 10;
+        if (opp.lives <= 0) { gameOver = true; winner = c.pi; Platform.addWin(winner); }
+        return false;
+      }
+      return true;
+    });
+  }
+  function draw() {
+    X.fillStyle = '#0a150a'; X.fillRect(0,0,W,H);
+    X.strokeStyle = '#1a3a1a'; X.lineWidth = 1;
+    for (let x = 0; x < W; x += 40) { X.beginPath(); X.moveTo(x,0); X.lineTo(x,H); X.stroke(); }
+    for (let y = 0; y < H; y += 40) { X.beginPath(); X.moveTo(0,y); X.lineTo(W,y); X.stroke(); }
+    X.strokeStyle = '#3a5a3a'; X.lineWidth = 2; X.setLineDash([10,10]);
+    X.beginPath(); X.moveTo(0,H/2); X.lineTo(W,H/2); X.stroke(); X.setLineDash([]);
+    drawTank(0); drawTank(1);
+    for (const c of cannonballs) {
+      X.fillStyle = '#ffcc00'; X.beginPath(); X.arc(c.x,c.y,CB_R,0,Math.PI*2); X.fill();
+      X.strokeStyle = 'rgba(255,204,0,0.3)'; X.lineWidth = 2;
+      X.beginPath(); X.moveTo(c.x-c.vx*2, c.y-c.vy*2); X.lineTo(c.x,c.y); X.stroke();
+    }
+    drawUI(); drawFireButton(0); drawFireButton(1);
+    if (gameOver) {
+      X.fillStyle = 'rgba(0,0,0,0.7)'; X.fillRect(0,0,W,H);
+      X.fillStyle = '#ffff00'; X.font = `bold ${W*0.1}px Arial`;
+      X.textAlign = 'center'; X.textBaseline = 'middle';
+      X.fillText(winner === 0 ? 'J1 Vence!' : 'J2 Vence!', W/2, H/2-W*0.08);
+      X.font = `${W*0.05}px Arial`; X.fillStyle = '#fff';
+      X.fillText('Toque para jogar novamente', W/2, H/2+W*0.08);
+    }
+  }
+  function drawTank(pi) {
+    const p = players[pi], tankR = W*TANK_R, barrelLen = W*BARREL_LEN, barrelW = W*BARREL_W;
+    X.save(); X.translate(p.x, p.y);
+    if (pi === 1) X.rotate(Math.PI);
+    if (p.hitFlash > 0) {
+      X.fillStyle = `rgba(255,255,255,${p.hitFlash/10})`; X.beginPath(); X.arc(0,0,tankR*1.2,0,Math.PI*2); X.fill(); p.hitFlash--;
+    }
+    X.fillStyle = p.color; X.beginPath(); X.arc(0,0,tankR,0,Math.PI*2); X.fill();
+    X.strokeStyle = '#000'; X.lineWidth = 2; X.stroke();
+    X.save(); X.rotate(p.angle - (pi === 1 ? Math.PI : 0));
+    X.fillStyle = lcol(p.color, 0.3);
+    rrect(X, 0, -barrelW/2, barrelLen, barrelW, barrelW/2); X.fill();
+    X.strokeStyle = '#000'; X.lineWidth = 1; X.stroke(); X.restore();
+    X.restore();
+  }
+  function drawUI() {
+    X.fillStyle = '#fff'; X.font = `bold ${W*0.06}px Arial`;
+    X.textAlign = 'left'; X.textBaseline = 'top';
+    X.fillText('J1', W*0.05, H*0.88);
+    X.font = `${W*0.05}px Arial`; X.fillText('❤'.repeat(players[0].lives), W*0.05, H*0.95);
+    X.save(); X.translate(W*0.95, H*0.05); X.rotate(Math.PI);
+    X.fillStyle = '#fff'; X.font = `bold ${W*0.06}px Arial`;
+    X.textAlign = 'left'; X.textBaseline = 'top'; X.fillText('J2', 0, 0);
+    X.font = `${W*0.05}px Arial`; X.fillText('❤'.repeat(players[1].lives), 0, W*0.07); X.restore();
+  }
+  function drawFireButton(pi) {
+    const x = W*0.82, y = pi === 0 ? H*0.82 : H*0.18;
+    X.fillStyle = players[pi].color; X.beginPath(); X.arc(x,y,FIRE_BTN_R,0,Math.PI*2); X.fill();
+    X.strokeStyle = '#000'; X.lineWidth = 2; X.stroke();
+    X.fillStyle = '#000'; X.font = `bold ${W*0.045}px Arial`;
+    X.textAlign = 'center'; X.textBaseline = 'middle'; X.fillText('FOGO!', x, y);
+  }
+  function loop() { if (!live) return; update(); draw(); raf = requestAnimationFrame(loop); }
+  return {
+    init() { init(); },
+    destroy() { destroy(); }
+  };
+})();
+
+// ═══════════════════════════════════════════════════
+//  FUTEBOL
+// ═══════════════════════════════════════════════════
+const Futebol = (() => {
+  let cv, X, raf, live = false, evOk = false;
+  let W, H, j1Score = 0, j2Score = 0, gameOver = false, winnerIdx = -1, pauseFrames = 0;
+  let player1, player2, ball, j1Touch = null, j2Touch = null;
+  let goalWidth, goalHeight, goalYStart;
+
+  class Circle {
+    constructor(x,y,r,color) { this.x=x; this.y=y; this.r=r; this.color=color; this.vx=0; this.vy=0; this.ax=0; this.ay=0; }
+    update() {
+      this.vx += this.ax; this.vy += this.ay; this.ax=0; this.ay=0;
+      this.x += this.vx; this.y += this.vy;
+      if (this.x-this.r<0) { this.x=this.r; this.vx*=-0.75; }
+      if (this.x+this.r>W) { this.x=W-this.r; this.vx*=-0.75; }
+      if (this.y-this.r<0) { this.y=this.r; this.vy*=-0.75; }
+      if (this.y+this.r>H) { this.y=H-this.r; this.vy*=-0.75; }
+    }
+  }
+  function drawField() {
+    const g = X.createLinearGradient(0,0,0,H);
+    g.addColorStop(0,'#147025'); g.addColorStop(1,'#1a7a30');
+    X.fillStyle=g; X.fillRect(0,0,W,H);
+    X.strokeStyle='white'; X.lineWidth=2;
+    X.beginPath(); X.moveTo(0,H/2); X.lineTo(W,H/2); X.stroke();
+    X.beginPath(); X.arc(W/2,H/2,W*0.15,0,Math.PI*2); X.stroke();
+    X.fillStyle='white'; X.fillRect(W/2-3,H/2-3,6,6);
+    X.fillStyle='rgba(255,255,255,0.2)';
+    X.fillRect(0,goalYStart,goalWidth,goalHeight);
+    X.fillRect(W-goalWidth,goalYStart,goalWidth,goalHeight);
+    X.strokeStyle='white'; X.lineWidth=3;
+    X.strokeRect(0,goalYStart,goalWidth,goalHeight);
+    X.strokeRect(W-goalWidth,goalYStart,goalWidth,goalHeight);
+  }
+  function drawPlayer(p, label) {
+    const g = X.createRadialGradient(p.x-p.r*0.3,p.y-p.r*0.3,0,p.x,p.y,p.r);
+    g.addColorStop(0,lcol(p.color,0.3)); g.addColorStop(0.7,p.color); g.addColorStop(1,dcol(p.color,0.4));
+    X.fillStyle=g; X.beginPath(); X.arc(p.x,p.y,p.r,0,Math.PI*2); X.fill();
+    X.strokeStyle='white'; X.lineWidth=2; X.stroke();
+    X.fillStyle='white'; X.font=`bold ${Math.floor(p.r*1.2)}px Arial`;
+    X.textAlign='center'; X.textBaseline='middle'; X.fillText(label,p.x,p.y);
+  }
+  function drawBallFut() {
+    const g = X.createRadialGradient(ball.x-ball.r*0.3,ball.y-ball.r*0.3,0,ball.x,ball.y,ball.r);
+    g.addColorStop(0,'#fff'); g.addColorStop(0.7,'#f5f5f5'); g.addColorStop(1,'#ccc');
+    X.fillStyle=g; X.beginPath(); X.arc(ball.x,ball.y,ball.r,0,Math.PI*2); X.fill();
+    X.fillStyle='#000';
+    [{x:ball.x,y:ball.y,s:0.15},{x:ball.x-ball.r*0.5,y:ball.y-ball.r*0.3,s:0.1},{x:ball.x+ball.r*0.5,y:ball.y-ball.r*0.3,s:0.1},{x:ball.x-ball.r*0.4,y:ball.y+ball.r*0.4,s:0.1},{x:ball.x+ball.r*0.4,y:ball.y+ball.r*0.4,s:0.1}].forEach(p=>{
+      X.beginPath(); X.arc(p.x,p.y,ball.r*p.s,0,Math.PI*2); X.fill();
+    });
+  }
+  function checkGoalFut() {
+    if (ball.x-ball.r<goalWidth && ball.y>goalYStart && ball.y<goalYStart+goalHeight) { j2Score++; return true; }
+    if (ball.x+ball.r>W-goalWidth && ball.y>goalYStart && ball.y<goalYStart+goalHeight) { j1Score++; return true; }
+    return false;
+  }
+  function resetAfterGoal() {
+    ball.x=W/2; ball.y=H/2; ball.vx=0; ball.vy=0;
+    player1.x=W*0.5; player1.y=H*0.7; player1.vx=0; player1.vy=0;
+    player2.x=W*0.5; player2.y=H*0.3; player2.vx=0; player2.vy=0;
+    pauseFrames=90;
+  }
+  function update() {
+    if (pauseFrames>0) { pauseFrames--; return; }
+    if (j1Touch) {
+      const dx=j1Touch.x-player1.x, dy=j1Touch.y-player1.y, d=Math.sqrt(dx*dx+dy*dy);
+      if (d>5) { player1.ax=(dx/d)*0.5; player1.ay=(dy/d)*0.5; }
+    }
+    player1.vx*=0.88; player1.vy*=0.88; player1.update();
+    if (j2Touch) {
+      const dx=j2Touch.x-player2.x, dy=j2Touch.y-player2.y, d=Math.sqrt(dx*dx+dy*dy);
+      if (d>5) { player2.ax=(dx/d)*0.5; player2.ay=(dy/d)*0.5; }
+    }
+    player2.vx*=0.88; player2.vy*=0.88; player2.update();
+    ball.vx*=0.985; ball.vy*=0.985; ball.update();
+    [player1,player2].forEach(p => {
+      const dx=ball.x-p.x, dy=ball.y-p.y, d=Math.sqrt(dx*dx+dy*dy), md=ball.r+p.r;
+      if (d<md) {
+        const a=Math.atan2(dy,dx), ov=md-d;
+        ball.x+=Math.cos(a)*ov; ball.y+=Math.sin(a)*ov;
+        ball.vx=p.vx*0.9+Math.cos(a)*8; ball.vy=p.vy*0.9+Math.sin(a)*8;
+      }
+    });
+    if (checkGoalFut()) {
+      if (j1Score>=5) { gameOver=true; winnerIdx=0; Platform.addWin(0); }
+      else if (j2Score>=5) { gameOver=true; winnerIdx=1; Platform.addWin(1); }
+      else resetAfterGoal();
+    }
+  }
+  function draw() {
+    drawField(); drawPlayer(player1,'J1'); drawPlayer(player2,'J2'); drawBallFut();
+    X.fillStyle='white'; X.font='bold 32px Arial';
+    X.textAlign='right'; X.textBaseline='top'; X.fillText('J1: '+j1Score, W-10, H-50);
+    X.textAlign='left'; X.save(); X.translate(10,10); X.rotate(Math.PI);
+    X.fillText('J2: '+j2Score, 0, 0); X.restore();
+    if (pauseFrames>0 && pauseFrames<60) {
+      X.fillStyle='rgba(0,0,0,0.5)'; X.fillRect(0,0,W,H);
+      X.fillStyle='#FFD700'; X.font='bold 80px Arial'; X.textAlign='center'; X.textBaseline='middle';
+      X.fillText('GOL!', W/2, H/2);
+    }
+    if (gameOver) {
+      X.fillStyle='rgba(0,0,0,0.7)'; X.fillRect(0,0,W,H);
+      X.fillStyle=winnerIdx===0?'#3366FF':'#FF6633'; X.font='bold 48px Arial';
+      X.textAlign='center'; X.textBaseline='middle';
+      X.fillText((winnerIdx===0?'Jogador 1':'Jogador 2')+' Venceu!', W/2, H/2-80);
+      X.fillStyle='white'; X.font='28px Arial'; X.fillText('Toque para jogar novamente', W/2, H/2+80);
+    }
+  }
+  function loop() { update(); draw(); if (live) raf=requestAnimationFrame(loop); }
+  return {
+    init() {
+      cv=document.getElementById('cv-futebol'); X=cv.getContext('2d');
+      W=cv.width=window.innerWidth; H=cv.height=window.innerHeight;
+      goalWidth=W*0.06; goalHeight=H*0.3; goalYStart=(H-goalHeight)/2;
+      const pr=W*0.065, br=W*0.04;
+      player1=new Circle(W*0.5,H*0.7,pr,'#3366FF');
+      player2=new Circle(W*0.5,H*0.3,pr,'#FF6633');
+      ball=new Circle(W/2,H/2,br,'#FFF');
+      j1Score=0; j2Score=0; gameOver=false; winnerIdx=-1; pauseFrames=0; j1Touch=null; j2Touch=null;
+      if (!evOk) {
+        cv.addEventListener('touchstart', e=>{ e.preventDefault(); for(let t of e.touches){ if(t.clientY>H/2) j1Touch={x:t.clientX,y:t.clientY}; else j2Touch={x:t.clientX,y:t.clientY}; } }, {passive:false});
+        cv.addEventListener('touchmove', e=>{ e.preventDefault(); j1Touch=null; j2Touch=null; for(let t of e.touches){ if(t.clientY>H/2) j1Touch={x:t.clientX,y:t.clientY}; else j2Touch={x:t.clientX,y:t.clientY}; } }, {passive:false});
+        cv.addEventListener('touchend', e=>{ e.preventDefault(); j1Touch=null; j2Touch=null; }, {passive:false});
+        cv.addEventListener('click', ()=>{ if(gameOver){ j1Score=0; j2Score=0; gameOver=false; winnerIdx=-1; resetAfterGoal(); } });
+        evOk=true;
+      }
+      live=true; loop();
+    },
+    destroy() { live=false; if(raf) cancelAnimationFrame(raf); }
+  };
+})();
+
+// ═══════════════════════════════════════════════════
+//  SLIME VOLEI
+// ═══════════════════════════════════════════════════
+const Slime = (() => {
+  let cv, X, raf, live = false, evOk = false;
+  let W, H, slimeR, netH, ballR;
+  let j1, j2, ball, score = [0,0], gameOver = false, flashTime = 0;
+  const gravSlime = 0.5, gravBall = 0.3, jumpForce = 12;
+
+  function init() {
+    cv = document.getElementById('cv-slime');
+    X = cv.getContext('2d');
+    W = cv.width = window.innerWidth;
+    H = cv.height = window.innerHeight;
+    slimeR = W*0.1; netH = H*0.025; ballR = W*0.04;
+    j1 = { x:W*0.25, y:H-slimeR, vx:0, vy:0, onGround:true, radius:slimeR, color:'#44BB44', idx:0 };
+    j2 = { x:W*0.75, y:slimeR,   vx:0, vy:0, onGround:true, radius:slimeR, color:'#AA44FF', idx:1 };
+    ball = { x:W*0.5, y:H*0.4, vx:0, vy:0, radius:ballR };
+    score = [0,0]; gameOver = false; flashTime = 0;
+    if (!evOk) { addEvents(); evOk = true; }
+    live = true; loop();
+  }
+  function destroy() { live = false; if (raf) cancelAnimationFrame(raf); }
+
+  function addEvents() {
+    cv.addEventListener('touchstart', (e) => {
+      if (!live) return;
+      if (gameOver) { init(); return; }
+      for (let t of e.touches) {
+        const x = t.clientX - cv.getBoundingClientRect().left;
+        const y = t.clientY - cv.getBoundingClientRect().top;
+        if (y > H/2) {
+          if (x < W/3) j1.vx = -8;
+          else if (x > W*2/3) j1.vx = 8;
+          else if (j1.onGround) { j1.vy = -jumpForce; j1.onGround = false; }
+        } else {
+          if (x < W/3) j2.vx = -8;
+          else if (x > W*2/3) j2.vx = 8;
+          else if (j2.onGround) { j2.vy = jumpForce; j2.onGround = false; }
+        }
+      }
+    });
+    cv.addEventListener('touchmove', (e) => {
+      if (!live || gameOver) return;
+      for (let t of e.touches) {
+        const x = t.clientX - cv.getBoundingClientRect().left;
+        const y = t.clientY - cv.getBoundingClientRect().top;
+        if (y > H/2) {
+          if (x < W/3) j1.vx = -8; else if (x > W*2/3) j1.vx = 8;
+        } else {
+          if (x < W/3) j2.vx = -8; else if (x > W*2/3) j2.vx = 8;
+        }
+      }
+    });
+  }
+
+  function update() {
+    j1.vx *= 0.85; j1.vy += gravSlime; j1.y += j1.vy;
+    if (j1.y >= H-j1.radius) { j1.y=H-j1.radius; j1.vy=0; j1.onGround=true; } else j1.onGround=false;
+    j1.x += j1.vx;
+    j1.x = Math.max(j1.radius, Math.min(W*0.5-slimeR*0.5, j1.x));
+
+    j2.vx *= 0.85; j2.vy -= gravSlime; j2.y += j2.vy;
+    if (j2.y <= j2.radius) { j2.y=j2.radius; j2.vy=0; j2.onGround=true; } else j2.onGround=false;
+    j2.x += j2.vx;
+    j2.x = Math.max(W*0.5+slimeR*0.5, Math.min(W-j2.radius, j2.x));
+
+    ball.vy += gravBall; ball.x += ball.vx; ball.y += ball.vy;
+    if (ball.x-ball.radius<0) { ball.x=ball.radius; ball.vx*=-0.8; }
+    if (ball.x+ball.radius>W) { ball.x=W-ball.radius; ball.vx*=-0.8; }
+
+    // Net collision — full width
+    const netTop = H/2-netH/2, netBot = H/2+netH/2;
+    if (ball.y-ball.radius<netBot && ball.y+ball.radius>netTop) {
+      if (ball.x > 0 && ball.x < W) {
+        if (ball.vy > 0) { ball.y=netBot+ball.radius; ball.vy*=-0.8; }
+        else { ball.y=netTop-ball.radius; ball.vy*=-0.8; }
+      }
+    }
+
+    if (ball.y+ball.radius>H) {
+      score[1]++; flashTime=60;
+      if (score[1]>=7) { gameOver=true; Platform.addWin(1); } else resetBall();
+    }
+    if (ball.y-ball.radius<0) {
+      score[0]++; flashTime=60;
+      if (score[0]>=7) { gameOver=true; Platform.addWin(0); } else resetBall();
+    }
+    collideBall(j1); collideBall(j2);
+    if (flashTime>0) flashTime--;
+  }
+  function collideBall(s) {
+    const dx=ball.x-s.x, dy=ball.y-s.y, dist=Math.sqrt(dx*dx+dy*dy), md=ball.radius+s.radius;
+    if (dist<md && dist>0) {
+      const nx=dx/dist, ny=dy/dist;
+      ball.x=s.x+nx*md; ball.y=s.y+ny*md;
+      const dv=(ball.vx-s.vx)*nx+(ball.vy-s.vy)*ny;
+      if (dv<0) { ball.vx-=2*dv*nx; ball.vy-=2*dv*ny; ball.vx+=s.vx*0.5; ball.vy+=s.vy*0.5; }
+      const spd=Math.sqrt(ball.vx*ball.vx+ball.vy*ball.vy);
+      if (spd>15) { ball.vx=ball.vx/spd*15; ball.vy=ball.vy/spd*15; }
+    }
+  }
+  function resetBall() { ball.x=W*0.5; ball.y=H*0.4; ball.vx=(Math.random()-0.5)*6; ball.vy=0; }
+
+  function draw() {
+    X.fillStyle='#0a1020'; X.fillRect(0,0,W,H);
+    X.fillStyle='#FFFF00'; X.fillRect(0, H/2-netH/2, W, netH);
+    drawSlime(j1); drawSlime(j2); drawBallSlime();
+    X.fillStyle='#FFF'; X.font='bold 40px Arial'; X.textAlign='center';
+    X.fillText(score[0], W/2, H-30);
+    X.save(); X.translate(W/2,30); X.rotate(Math.PI); X.fillText(score[1],0,0); X.restore();
+    if (flashTime>0 && flashTime%10<5) { X.fillStyle='rgba(255,255,255,0.3)'; X.fillRect(0,0,W,H); }
+    if (gameOver) {
+      X.fillStyle='rgba(0,0,0,0.7)'; X.fillRect(0,0,W,H);
+      const w = score[0]>=7 ? 'J1' : 'J2';
+      X.fillStyle='#FFD700'; X.font=`bold ${W*0.1}px Arial`; X.textBaseline='middle';
+      X.fillText(w+' VENCEU!', W/2, H/2-W*0.08);
+      X.font=`${W*0.05}px Arial`; X.fillStyle='#fff';
+      X.fillText('Toque para jogar novamente', W/2, H/2+W*0.08);
+    }
+  }
+  function drawSlime(s) {
+    X.fillStyle=s.color; X.beginPath();
+    if (s.idx===0) { X.arc(s.x,s.y,s.radius,0,Math.PI,false); X.lineTo(s.x-s.radius,s.y); }
+    else { X.arc(s.x,s.y,s.radius,Math.PI,2*Math.PI,false); X.lineTo(s.x+s.radius,s.y); }
+    X.fill();
+    X.fillStyle='rgba(255,255,255,0.3)'; X.beginPath();
+    if (s.idx===0) X.arc(s.x-s.radius*0.3, s.y-s.radius*0.3, s.radius*0.2, 0, Math.PI*2);
+    else X.arc(s.x-s.radius*0.3, s.y+s.radius*0.3, s.radius*0.2, 0, Math.PI*2);
+    X.fill();
+  }
+  function drawBallSlime() {
+    X.fillStyle='rgba(0,0,0,0.2)'; X.beginPath();
+    X.ellipse(ball.x, ball.y+ball.radius*1.5, ball.radius*0.8, ball.radius*0.3, 0, 0, Math.PI*2); X.fill();
+    const g=X.createRadialGradient(ball.x-ball.radius*0.3,ball.y-ball.radius*0.3,0,ball.x,ball.y,ball.radius);
+    g.addColorStop(0,'#FFF'); g.addColorStop(1,'#CCC');
+    X.fillStyle=g; X.beginPath(); X.arc(ball.x,ball.y,ball.radius,0,Math.PI*2); X.fill();
+  }
+  function loop() { if (!live) return; update(); draw(); raf=requestAnimationFrame(loop); }
+  return {
+    init() { init(); },
+    destroy() { destroy(); }
+  };
+})();
+
+// ═══════════════════════════════════════════════════
+//  PING PONG
+// ═══════════════════════════════════════════════════
+const PingPong = (() => {
+  let cv, X, raf, live = false, evOk = false;
+  let W, H;
+  let paddleW, paddleH, ballR;
+
+  const state = {
+    j1Score:0, j2Score:0, gameOver:false, pauseUntil:0,
+    scoreFlashUntil:0, scoreFlashColor:'', missTextUntil:0, missTextX:0, missTextY:0
+  };
+  const paddle = { j1:{x:0,y:0,targetX:0,prevX:0}, j2:{x:0,y:0,targetX:0,prevX:0} };
+  const ball = { x:0, y:0, vx:0, vy:0, speed:5, trail:[] };
+  const touches = { j1:null, j2:null };
+
+  function resetGame() {
+    state.j1Score=0; state.j2Score=0; state.gameOver=false; state.pauseUntil=0;
+    resetBall(0);
+    paddle.j1.x=W/2; paddle.j1.targetX=W/2; paddle.j1.prevX=W/2;
+    paddle.j2.x=W/2; paddle.j2.targetX=W/2; paddle.j2.prevX=W/2;
+  }
+  function resetBall(serveTo) {
+    ball.x=W/2; ball.y=H/2; ball.speed=5; ball.trail=[];
+    const ang=(Math.random()*0.6-0.3)+(serveTo===0?0.2:-0.2);
+    const mag=Math.sqrt(ang*ang+0.9);
+    ball.vx=(ang/mag)*ball.speed;
+    ball.vy=(serveTo===0?1:-1)*Math.sqrt(1-(ang/mag)**2)*ball.speed;
+    state.pauseUntil=Date.now()+1000;
+  }
+  function updatePaddle(p, player) {
+    const t = player===0 ? touches.j1 : touches.j2;
+    if (t) p.targetX = t.clientX || t.x || p.targetX;
+    p.prevX=p.x; p.x+=(p.targetX-p.x)*0.25;
+    p.x=Math.max(paddleW/2, Math.min(W-paddleW/2, p.x));
+  }
+  function checkPaddle(p, py, player) {
+    const dx=ball.x-p.x, dy=ball.y-py, dist=Math.sqrt(dx*dx+dy*dy);
+    if (dist < ballR+paddleH/2) {
+      const hp=Math.max(-1,Math.min(1,dx/(paddleW/2))), pv=p.x-p.prevX;
+      const nVx=hp*0.8*ball.speed+pv*0.3;
+      const nVy=Math.sqrt(Math.max(0,ball.speed*ball.speed-nVx*nVx));
+      ball.vx=nVx; ball.vy=(player===0?-1:1)*nVy;
+      ball.speed=Math.min(18,ball.speed*1.03);
+      const spd=Math.sqrt(ball.vx*ball.vx+ball.vy*ball.vy);
+      if (spd>0) { ball.vx=ball.vx/spd*ball.speed; ball.vy=ball.vy/spd*ball.speed; }
+      ball.y=py+(player===0?-1:1)*(ballR+paddleH/2);
+    }
+  }
+  function update() {
+    if (state.pauseUntil>Date.now()) return;
+    updatePaddle(paddle.j1,0); updatePaddle(paddle.j2,1);
+    ball.trail.unshift({x:ball.x,y:ball.y});
+    if (ball.trail.length>5) ball.trail.pop();
+    ball.x+=ball.vx; ball.y+=ball.vy;
+    if (ball.x-ballR<0||ball.x+ballR>W) { ball.vx*=-1; ball.x=Math.max(ballR,Math.min(W-ballR,ball.x)); }
+    checkPaddle(paddle.j1, H-paddleH/2-H*0.04, 0);
+    checkPaddle(paddle.j2, paddleH/2+H*0.04, 1);
+    if (ball.y>H-ballR) {
+      state.j2Score++; state.missTextX=ball.x; state.missTextY=ball.y;
+      state.missTextUntil=Date.now()+500; state.scoreFlashUntil=Date.now()+300; state.scoreFlashColor='#ff9800';
+      if (state.j2Score>=7) { state.gameOver=true; Platform.addWin(1); } else resetBall(1);
+    } else if (ball.y<ballR) {
+      state.j1Score++; state.missTextX=ball.x; state.missTextY=ball.y;
+      state.missTextUntil=Date.now()+500; state.scoreFlashUntil=Date.now()+300; state.scoreFlashColor='#00bcd4';
+      if (state.j1Score>=7) { state.gameOver=true; Platform.addWin(0); } else resetBall(0);
+    }
+  }
+  function draw() {
+    X.fillStyle='#0a1520'; X.fillRect(0,0,W,H);
+    X.strokeStyle='#4dd0e1'; X.lineWidth=3; X.strokeRect(0,0,W,H);
+    X.lineWidth=1; X.setLineDash([10,10]);
+    X.beginPath(); X.moveTo(0,H/2); X.lineTo(W,H/2); X.stroke(); X.setLineDash([]);
+    // Paddles
+    X.fillStyle='#00bcd4';
+    rrect(X,paddle.j1.x-paddleW/2,paddle.j1.y-paddleH/2,paddleW,paddleH,4); X.fill();
+    X.fillStyle='#ff9800';
+    rrect(X,paddle.j2.x-paddleW/2,paddle.j2.y-paddleH/2,paddleW,paddleH,4); X.fill();
+    // Trail
+    for (let i=0;i<ball.trail.length;i++) {
+      const p=ball.trail[i], a=(1-i/ball.trail.length)*0.4;
+      X.fillStyle=`rgba(255,255,255,${a})`; X.beginPath(); X.arc(p.x,p.y,ballR*0.7,0,Math.PI*2); X.fill();
+    }
+    // Ball
+    const g=X.createRadialGradient(ball.x-2,ball.y-2,0,ball.x,ball.y,ballR);
+    g.addColorStop(0,'#fff'); g.addColorStop(0.5,'#e0e0e0'); g.addColorStop(1,'#a0a0a0');
+    X.fillStyle=g; X.beginPath(); X.arc(ball.x,ball.y,ballR,0,Math.PI*2); X.fill();
+    // Scores
+    X.font='bold 48px sans-serif'; X.fillStyle='#fff'; X.textAlign='center'; X.textBaseline='bottom';
+    X.fillText(state.j1Score, W/2, H-H*0.12);
+    X.save(); X.translate(W/2,H*0.12); X.rotate(Math.PI); X.fillText(state.j2Score,0,0); X.restore();
+    // Score flash
+    if (state.scoreFlashUntil>Date.now()) {
+      const pr=1-(state.scoreFlashUntil-Date.now())/300;
+      X.fillStyle=state.scoreFlashColor; X.globalAlpha=0.2*(1-pr); X.fillRect(0,0,W,H); X.globalAlpha=1;
+    }
+    // Miss text
+    if (state.missTextUntil>Date.now()) {
+      const pr=1-(state.missTextUntil-Date.now())/500;
+      X.font='bold 32px sans-serif'; X.fillStyle=`rgba(255,100,100,${1-pr})`;
+      X.textAlign='center'; X.textBaseline='middle'; X.fillText('MISS!',state.missTextX,state.missTextY);
+    }
+    if (state.gameOver) {
+      X.fillStyle='rgba(0,0,0,0.7)'; X.fillRect(0,0,W,H);
+      const w=state.j1Score>state.j2Score?'J1':'J2', wc=state.j1Score>state.j2Score?'#00bcd4':'#ff9800';
+      X.font='bold 64px sans-serif'; X.fillStyle=wc; X.textAlign='center'; X.textBaseline='middle';
+      X.fillText(w, W/2, H/2-40); X.font='20px sans-serif'; X.fillStyle='#fff';
+      X.fillText('Venceu!', W/2, H/2+20); X.font='16px sans-serif'; X.fillStyle='#ccc';
+      X.fillText('Toque para jogar novamente', W/2, H/2+80);
+    }
+  }
+  function loop() { if (!live) return; update(); draw(); raf=requestAnimationFrame(loop); }
+  return {
+    init() {
+      cv=document.getElementById('cv-pingpong'); X=cv.getContext('2d');
+      W=cv.width=window.innerWidth; H=cv.height=window.innerHeight;
+      paddleW=W*0.28; paddleH=H*0.018; ballR=W*0.025;
+      paddle.j1.y=H-paddleH/2-H*0.04; paddle.j2.y=paddleH/2+H*0.04;
+      paddle.j1.x=paddle.j1.targetX=paddle.j1.prevX=W/2;
+      paddle.j2.x=paddle.j2.targetX=paddle.j2.prevX=W/2;
+      state.j1Score=0; state.j2Score=0; state.gameOver=false; state.pauseUntil=0;
+      resetBall(0);
+      if (!evOk) {
+        cv.addEventListener('touchstart', e=>{ if(state.gameOver){resetGame();return;} for(let t of e.touches){ if(t.clientY>H/2) touches.j1=t; else touches.j2=t; } });
+        cv.addEventListener('touchmove', e=>{ for(let t of e.touches){ if(t.clientY>H/2) touches.j1=t; else touches.j2=t; } });
+        cv.addEventListener('touchend', e=>{ if(e.touches.length===0){touches.j1=null;touches.j2=null;} });
+        cv.addEventListener('click', ()=>{ if(state.gameOver) resetGame(); });
+        evOk=true;
+      }
+      live=true; loop();
+    },
+    destroy() { live=false; cancelAnimationFrame(raf); evOk=false; }
+  };
+})();
+
+const Games = { bilhar:Bilhar, airhockey:AirHockey, sumo:Sumo, tanques:Tanques, futebol:Futebol, slime:Slime, pingpong:PingPong };
 </script>
 </body>
 </html>
